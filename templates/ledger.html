@@ -70,7 +70,7 @@
         {% set ns = namespace(forecast_divider_shown=false) %}
         {% for row in rows %}
         {% set default_insert_date = row.insert_default_date.isoformat() if row.insert_default_date else (row.date.isoformat() if row.date else today_iso) %}
-        {% if not ns.forecast_divider_shown and row.row_type != 'month_summary' and row.source is defined and row.source != 'actual' %}
+        {% if not ns.forecast_divider_shown and row.row_type != 'month_summary' and row.source is defined and row.source != 'actual' and not row.due_not_posted %}
         <tr class="forecast-divider-row">
           <td colspan="8"><span class="forecast-divider-label">↓ Forecast begins {{ forecast_start_iso }}</span></td>
         </tr>
@@ -93,7 +93,7 @@
           <td class="row-action-cell"></td>
         </tr>
         {% else %}
-        <tr class="ledger-row {{ 'actual-row' if row.source == 'actual' else 'forecast-row' }}">
+        <tr class="ledger-row {{ 'actual-row' if row.source == 'actual' else 'forecast-row' }}{{ ' due-row' if row.due_not_posted else '' }}">
           <td>
             {% if row.source == 'card' and row.card_charges %}
             <button type="button" class="card-expand-toggle js-card-toggle" data-target="card-detail-{{ loop.index }}" aria-expanded="false" aria-label="Show the charges behind this payment">›</button>
@@ -115,7 +115,12 @@
             -
             {% endif %}
           </td>
-          <td><span class="table-pill source-{{ row.source }}">{{ row.source }}</span></td>
+          <td>
+            <span class="table-pill source-{{ row.source }}">{{ row.source }}</span>
+            {% if row.due_not_posted %}
+            <span class="table-pill due-pill" title="Due today — your imported data ends today, so this may simply not have posted yet. It still counts toward the projected balance.">due, not yet posted</span>
+            {% endif %}
+          </td>
           <td class="amount-value">{% if row.income > 0 %}${{ row.income|currency }}{% else %}-{% endif %}</td>
           <td class="amount-value">{% if row.expense > 0 %}${{ row.expense|currency }}{% else %}-{% endif %}</td>
           <td class="amount-value {{ 'negative' if row.running_balance < 0 else '' }}{% if row.date.isoformat() == today_iso %} today-balance{% endif %}">${{ row.running_balance|currency }}</td>
