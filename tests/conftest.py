@@ -82,7 +82,17 @@ def add_recurring(
     return int(row[0])
 
 
-def add_imported(db, user_id, account_id, account_name, tx_date, description, amount, flow="expense"):
+def add_imported(
+    db,
+    user_id,
+    account_id,
+    account_name,
+    tx_date,
+    description,
+    amount,
+    flow="expense",
+    is_transfer=False,
+):
     with db.get_connection() as conn:
         conn.execute(
             """
@@ -90,7 +100,7 @@ def add_imported(db, user_id, account_id, account_name, tx_date, description, am
                 user_id, account, tx_date, description, merchant, amount, flow,
                 is_transfer, fingerprint, account_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 user_id,
@@ -100,6 +110,7 @@ def add_imported(db, user_id, account_id, account_name, tx_date, description, am
                 description,
                 amount,
                 flow,
+                is_transfer,
                 f"fp-{description}-{tx_date}-{amount}",
                 account_id,
             ],

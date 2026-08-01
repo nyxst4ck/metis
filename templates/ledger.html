@@ -170,7 +170,7 @@
                     </td>
                     <td>
                       <span class="table-pill">
-                        {% if charge.kind == 'actual' %}Imported{% elif charge.kind == 'recurring' %}Recurring{% else %}One-time{% endif %}
+                        {% if charge.kind == 'actual' %}Imported{% elif charge.kind == 'recurring' %}Recurring{% elif charge.kind == 'payment' %}Paid{% else %}One-time{% endif %}
                       </span>
                     </td>
                     <td class="amount-value {{ 'positive' if charge.delta > 0 else 'negative' }}">
