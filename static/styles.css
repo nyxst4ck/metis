@@ -2177,6 +2177,18 @@ body.amounts-hidden .amount-sensitive {
   background: var(--surface-muted);
   color: var(--accent);
 }
+/* Expected, dated on the actuals cutover, with no actual to settle it: the day's
+   import may just not have caught it yet. Counted in the balance, flagged so it
+   is never mistaken for something that already cleared. */
+.ledger-row.due-row td:first-child {
+  border-left: 3px solid var(--warning);
+}
+.table-pill.due-pill {
+  margin-left: 0.3rem;
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
 .forecast-divider-row td {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   padding: 0.3rem 0.75rem;

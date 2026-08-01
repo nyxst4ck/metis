@@ -1709,17 +1709,6 @@ def _sum_actual_card_charges(user_id: int, card: Dict[str, Any], after: date, cl
     return float(row[0] if row else 0.0)
 
 
-def _card_payment_dates(user_id: int, card: Dict[str, Any]) -> List[date]:
-    """Dates of a card's own recorded payments (imported transfer rows)."""
-    clause, params = _card_scope_sql(card)
-    rows = fetch_all(f"SELECT tx_date FROM imported_transactions "
-            f"WHERE user_id = ? AND {clause} AND is_transfer", [user_id, *params])
-    dates: List[date] = []
-    for (value,) in rows:
-        dates.append(value.date() if isinstance(value, datetime) else value)
-    return dates
-
-
 def _card_payments_between(user_id: int, card: Dict[str, Any], after: date, through: date) -> float:
     """Total magnitude of a card's recorded payments in (after, through]."""
     clause, params = _card_scope_sql(card)
@@ -1831,7 +1820,6 @@ def forecast_card_payments(
             continue  # cycle not configured
 
         card_cutover = card_actual_cutover(user_id, card)
-        payment_dates = _card_payment_dates(user_id, card)
         expected = _card_expected_charges(
             user_id,
             int(card["id"]),
@@ -1844,14 +1832,6 @@ def forecast_card_payments(
                 continue
             if cutover is not None and due <= cutover:
                 continue  # already paid within the checking actuals
-            # If the card itself recorded a payment for this closed statement (an
-            # early/late payment the checking cutover wouldn't catch), the cycle is
-            # settled — don't project a phantom payment for it.
-            if any(
-                close < pd <= due + timedelta(days=CARD_PAYMENT_GRACE_DAYS)
-                for pd in payment_dates
-            ):
-                continue
 
             actual_items = _list_actual_card_charges(user_id, card, prev_close, close)
             actual = sum(item["delta"] for item in actual_items)
@@ -1870,12 +1850,42 @@ def forecast_card_payments(
             ]
             expected_sum = sum(item["delta"] for item in expected_items)
             delta = round(actual + expected_sum, 2)
+
+            # Payments the card itself recorded against this closed statement — an
+            # early or late payment the checking cutover would not catch — reduce
+            # what is left to pay. Their mere presence settles nothing: a card paid
+            # in instalments is partly paid for most of its cycle, and treating the
+            # first instalment as settlement would hide the rest of the balance.
+            applied_items: List[Dict[str, Any]] = []
+            if delta < 0:
+                applied = _card_payments_between(
+                    user_id, card, close, due + timedelta(days=CARD_PAYMENT_GRACE_DAYS)
+                )
+                # Never credit back more than was owed: an overpayment settles this
+                # statement, it does not turn the projection into income.
+                applied = min(applied, -delta)
+                if applied > 0.005:
+                    applied_items.append(
+                        {
+                            "date": close,
+                            "description": "Payments already applied",
+                            "delta": round(applied, 2),
+                            "kind": "payment",
+                            "category_name": "",
+                            "category_color": safe_hex_color(None),
+                        }
+                    )
+                    delta = round(delta + applied, 2)
+
             if abs(delta) < 0.005:
                 continue
 
             card_charges = sorted(
                 actual_items + expected_items, key=lambda item: item["date"]
             )
+            # Appended rather than sorted in: it is an aggregate of everything paid
+            # after the statement closed, so it belongs at the end of the breakdown.
+            card_charges.extend(applied_items)
             payments.append(
                 {
                     "date": due,
@@ -2277,7 +2287,14 @@ def build_budget_summary(user_id: int, window_start: date, window_end: date) -> 
 
 def collect_blended_transactions(user_id: int, window_start: date, window_end: date) -> List[Dict[str, Any]]:
     """Actual checking transactions up to the latest CSV date, then the expected
-    forecast after it — one coherent, non-double-counted cash timeline."""
+    forecast after it — one coherent, non-double-counted cash timeline.
+
+    The cutover date itself belongs to both halves. An import taken that day is
+    only as complete as the bank was at the time, so a bill due that day may
+    simply not have posted yet. Treating the day as pure actuals would silently
+    drop it from the ledger, so expected occurrences dated on the cutover that no
+    actual has settled are kept and flagged `due_not_posted`. Earlier dates get no
+    such benefit of the doubt: the same import covered them in full."""
     cutover = latest_checking_actual_date(user_id)
 
     transactions: List[Dict[str, Any]] = []
@@ -2285,15 +2302,30 @@ def collect_blended_transactions(user_id: int, window_start: date, window_end: d
         actual_end = min(window_end, cutover)
         if window_start <= actual_end:
             transactions.extend(load_actual_checking_transactions(user_id, window_start, actual_end))
-        forecast_start = max(window_start, cutover + timedelta(days=1))
+        # Begin the forecast *on* the cutover. Occurrences that day which an actual
+        # already settled are dropped by `paid_through` below, so only genuinely
+        # unposted ones survive.
+        forecast_start = max(window_start, cutover)
+        # Card payments keep the old boundary — forecast_card_payments settles a
+        # whole cycle at once and already skips any due on or before the cutover.
+        card_forecast_start = max(window_start, cutover + timedelta(days=1))
     else:
         forecast_start = window_start
+        card_forecast_start = window_start
 
     if forecast_start <= window_end:
-        transactions.extend(
-            collect_window_transactions(user_id, forecast_start, window_end, paid_through=cutover)
+        expected = collect_window_transactions(
+            user_id, forecast_start, window_end, paid_through=cutover
         )
-        transactions.extend(forecast_card_payments(user_id, forecast_start, window_end, cutover))
+        if cutover is not None:
+            for tx in expected:
+                if tx["date"] == cutover:
+                    tx["due_not_posted"] = True
+        transactions.extend(expected)
+    if card_forecast_start <= window_end:
+        transactions.extend(
+            forecast_card_payments(user_id, card_forecast_start, window_end, cutover)
+        )
 
     transactions.sort(
         key=lambda tx: (
