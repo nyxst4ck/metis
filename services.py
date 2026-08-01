@@ -119,8 +119,22 @@ def slugify_user_name(display_name: str) -> str:
     return normalize_user_slug(cleaned[:32])
 
 
+# Browsers drop these from a URL wherever they appear, so a check that reads the
+# raw string sees something the browser never resolves.
+_URL_IGNORED_CHARS = str.maketrans("", "", "\t\r\n")
+
+
 def resolve_safe_redirect_target(target: str) -> str:
-    cleaned = target.strip()
+    """Reduce an attacker-controllable `next` to a same-site absolute path, or the
+    dashboard. This is what stops a signed-in user being bounced off-site.
+
+    Normalize the way a browser will before testing the shape: tab, newline and
+    carriage return are removed wherever they sit, and a backslash reads as a
+    forward slash in the authority position. Skipping that leaves `/\\host` and
+    `/<tab>/host` passing a plain "starts with / but not //" test, only for the
+    browser to resolve both as the protocol-relative `//host`.
+    """
+    cleaned = target.strip().translate(_URL_IGNORED_CHARS).replace("\\", "/")
     if cleaned.startswith("/") and not cleaned.startswith("//"):
         return cleaned
     return "/dashboard"
